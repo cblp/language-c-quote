@@ -20,6 +20,8 @@ module Language.C.Quote.Base (
     quasiquote
   ) where
 
+import Debug.Trace
+
 import Control.Monad ((>=>))
 import qualified Data.ByteString.Char8 as B
 import Data.Data (Data(..))
@@ -183,14 +185,20 @@ qqIdE :: C.Id -> Maybe (Q Exp)
 qqIdE (C.AntiId v loc)  = Just [|toIdent $(antiVarE v) $(qqLocE loc)|]
 qqIdE _                 = Nothing
 
+-- | TODO(Syrovetsky, 2016-11-30) remove?
 qqDeclSpecE :: C.DeclSpec -> Maybe (Q Exp)
 qqDeclSpecE (C.AntiDeclSpec v _) = Just $ antiVarE v
 qqDeclSpecE (C.AntiTypeDeclSpec extraStorage extraTypeQuals v _) =
-    Just [|let C.Type (C.DeclSpec storage typeQuals typeSpec loc) _ _
+    Just [|let C.Type (C.DeclSpec storage typeQuals typeSpec loc) decl _
                    = $(antiVarE v)
+               typeQuals' = case decl of
+                   C.Ptr{} ->
+                       typeQuals
+                   _ ->
+                       typeQuals ++ $(dataToExpQ qqExp extraTypeQuals)
            in
              C.DeclSpec (storage ++ $(dataToExpQ qqExp extraStorage))
-                        (typeQuals ++ $(dataToExpQ qqExp extraTypeQuals))
+                        typeQuals'
                         typeSpec
                         loc
          |]
@@ -212,9 +220,39 @@ qqTypeQualListE (C.AntiTypeQuals v _ : stms) =
 qqTypeQualListE (stm : stms) =
     Just [|$(dataToExpQ qqExp stm) : $(dataToExpQ qqExp stms)|]
 
+-- | Inject type qualifiers into decl if should
+-- (i. e. decl is a pointer or something like it).
+injectQualsToDecl :: [C.TypeQual] -> C.Decl -> C.Decl
+injectQualsToDecl extraTypeQuals decl = case decl of
+    C.Ptr ptrQuals ptrNestedDecl ptrLoc ->
+        C.Ptr (ptrQuals ++ extraTypeQuals) ptrNestedDecl ptrLoc
+    _ ->
+        decl
+
 qqTypeE :: C.Type -> Maybe (Q Exp)
-qqTypeE (C.AntiType v _)  = Just $ antiVarE v
-qqTypeE _                 = Nothing
+qqTypeE (C.AntiType v _) = Just $ antiVarE v
+qqTypeE (C.Type (C.AntiTypeDeclSpec extraStorage extraTypeQuals v _)
+                extraDecl
+                extraLoc) =
+    traceShow ("qqTypeE out", "v", v, "extraDecl", extraDecl) $
+    Just [|
+        let C.Type (C.DeclSpec storage typeQuals typeSpec loc) decl _ =
+                $(antiVarE v)
+            storage' = storage ++ $(dataToExpQ qqExp extraStorage)
+            typeQuals' = case decl of
+                C.Ptr{} ->
+                    typeQuals
+                _ ->
+                    typeQuals ++ $(dataToExpQ qqExp extraTypeQuals)
+            declSpec' = C.DeclSpec storage' typeQuals' typeSpec loc
+            decl' = $(dataToExpQ qqExp extraDecl)
+                    `P.composeDecls`
+                    injectQualsToDecl $(dataToExpQ qqExp extraTypeQuals) decl
+            loc' = $(dataToExpQ qqExp extraLoc)
+        in  traceShow ("qqTypeE in", "v", v, "extraDecl", $(dataToExpQ qqExp extraDecl), "decl", decl, "decl'", decl') $
+            C.Type declSpec' decl' loc'
+        |]
+qqTypeE _ = Nothing
 
 qqInitializerE :: C.Initializer -> Maybe (Q Exp)
 qqInitializerE (C.AntiInit v _)  = Just $ antiVarE v
@@ -228,8 +266,40 @@ qqInitializerListE (field : fields) =
     Just [|$(dataToExpQ qqExp field) : $(dataToExpQ qqExp fields)|]
 
 qqInitGroupE :: C.InitGroup -> Maybe (Q Exp)
-qqInitGroupE (C.AntiDecl v _)  = Just $ antiVarE v
-qqInitGroupE _                 = Nothing
+qqInitGroupE (C.AntiDecl v _) = Just $ antiVarE v
+qqInitGroupE (C.InitGroup (C.AntiTypeDeclSpec commonStorage commonTypeQuals v _)
+                          commonAttrs
+                          inits
+                          loc) =
+    Just [|
+        let C.Type insertedDeclSpec insertedDecl _ = $(antiVarE v)
+            C.DeclSpec insertedStorage insertedTypeQuals typeSpec dsLoc =
+                insertedDeclSpec
+            typeQuals' = case insertedDecl of
+                C.Ptr{} ->
+                    insertedTypeQuals
+                _ ->
+                    insertedTypeQuals ++ $(dataToExpQ qqExp commonTypeQuals)
+            inits' =
+                [ C.Init iid decl' label initr iattrs iloc
+                | C.Init iid decl label initr iattrs iloc <-
+                      $(dataToExpQ qqExp inits)
+                , let decl' =
+                          injectQualsToDecl $(dataToExpQ qqExp commonTypeQuals)
+                                            decl
+                ]
+        in  C.InitGroup
+                (C.DeclSpec
+                    (insertedStorage ++ $(dataToExpQ qqExp commonStorage))
+                    typeQuals'
+                    typeSpec
+                    dsLoc)
+                $(dataToExpQ qqExp commonAttrs)
+                inits'
+                $(dataToExpQ qqExp loc)
+        |]
+-- qqInitGroupE ig = error $ "qqInitGroupE: " ++ show ig
+qqInitGroupE _ = Nothing
 
 qqInitGroupListE :: [C.InitGroup] -> Maybe (Q Exp)
 qqInitGroupListE [] = Just [|[]|]

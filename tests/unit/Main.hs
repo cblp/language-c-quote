@@ -17,7 +17,6 @@ import MainCPP
 import Numeric (showHex)
 import Objc (objcTests, objcRegressionTests)
 import CUDA (cudaTests)
-import System.Exit (exitFailure, exitSuccess)
 import Text.PrettyPrint.Mainland
 
 main :: IO ()
@@ -150,6 +149,7 @@ cQuotationTests = testGroup "C quotations"
     , testCase "block items antiquote" test_item
     , testCase "qualifier with type antiquote 1" test_qual_antitype1
     , testCase "qualifier with type antiquote 2" test_qual_antitype2
+    , testGroup "qualifier with type antiquote 3" test_qual_antitype3
     ]
   where
     test_id :: Assertion
@@ -329,6 +329,43 @@ cQuotationTests = testGroup "C quotations"
           @?= [cexp|(const int*) NULL|]
       where
         tau = [cty|int|]
+
+    test_qual_antitype3 :: [Test]
+    test_qual_antitype3 =
+        [ testCase "type" $
+            [cty|const $ty:tau1|]
+              @?= [cty|int * const|]
+        , testCase "expression" $
+            [cexp|(const $ty:tau) NULL|]
+              @?= [cexp|(int * const) NULL|]
+        , testCase "initialization group" $
+            [cdecl|const $ty:tau v, a[];|]
+              @?= [cdecl|int * const v, * a[];|]
+        , testCase "injecting array into initialization group" $
+            [cdecl|const $ty:phi v, a[];|]
+              @?= [cdecl|int const v[], a[][];|]
+        , testCase "function declaration" $
+            [cdecl|const $ty:tau f(const $ty:tau);|]
+              @?= [cdecl|int * const f(int * const);|]
+        -- , testCase "function definition" $
+        --     [cfun|const $ty:tau f(const $ty:tau) {}|]
+        --       @?= [cfun|int * const f(int * const) {}|]
+        -- , testCase "function initialization group" $
+        --     [cdecl|const $ty:tau f1(void), f2(void);|]
+        --       @?= [cdecl|int * const f1(void), * f2(void);|]
+
+        -- TODO(cblp, 2016-11-30) why does TypedefGroup morph into InitGroup?
+        -- , testCase "typedef group" $
+        --     [cdecl|typedef const $ty:tau v, a[];|]
+        --       @?= [cdecl|typedef int * const v, a[];|]
+        -- TODO(cblp, 2016-11-30) implement $ty in field declarations
+        -- , testCase "struct field" $
+        --     [cdecl|struct {const $ty:tau v, a[];};|]
+        --       @?= [cdecl|struct {int * const v, a[];};|]
+        ]
+      where
+        tau @ tau1 = [cty|int *|]
+        phi = [cty|int []|]
 
 cPatternAntiquotationTests :: Test
 cPatternAntiquotationTests = testGroup "C pattern antiquotations"

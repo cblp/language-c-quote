@@ -139,19 +139,21 @@ data ArraySize = ArraySize Bool Exp !SrcLoc
                | NoArraySize !SrcLoc
     deriving (Eq, Ord, Show, Data, Typeable)
 
+-- | List-like structure of type modifiers with their qualifiers.
 data Decl = DeclRoot !SrcLoc
           | Ptr [TypeQual] Decl !SrcLoc
           | Array [TypeQual] ArraySize Decl !SrcLoc
           | Proto Decl Params !SrcLoc
           | OldProto Decl [Id] !SrcLoc
           | AntiTypeDecl String !SrcLoc
-
-          -- Clang blocks
+          -- | Clang block
           | BlockPtr [TypeQual] Decl !SrcLoc
     deriving (Eq, Ord, Show, Data, Typeable)
 
-data Type = Type DeclSpec Decl !SrcLoc
-          | AntiType String !SrcLoc
+data Type
+    -- | 'DeclSpec' is the base data type, 'Decl' is the type modifiers list
+    = Type DeclSpec Decl !SrcLoc
+    | AntiType String !SrcLoc
     deriving (Eq, Ord, Show, Data, Typeable)
 
 data Designator = IndexDesignator Exp !SrcLoc
